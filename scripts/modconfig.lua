@@ -290,6 +290,9 @@ function ModConfigMenu.PostUpdate()
   if versionPrintTimer > 0 then
     versionPrintTimer = versionPrintTimer - 1
   end
+
+  -- Check for menu selection changes and trigger callbacks
+  checkSelectionChanges()
 end
 
 ModConfigMenu.Mod:AddCallback(ModCallbacks.MC_POST_UPDATE, ModConfigMenu.PostUpdate)
@@ -1016,6 +1019,138 @@ function ModConfigMenu.RemoveSetting(categoryName, subcategoryName, settingAttri
   end
 
   return false
+end
+
+------------------------------
+--MENU SELECTION TRACKING API--
+------------------------------
+
+-- Callback system for selection changes
+ModConfigMenu.SelectionCallbacks = ModConfigMenu.SelectionCallbacks or {}
+
+-- Add a callback that gets called when the menu selection changes
+function ModConfigMenu.AddSelectionCallback(callback)
+  if type(callback) ~= "function" then
+    error("ModConfigMenu.AddSelectionCallback - Callback must be a function", 2)
+  end
+
+  table.insert(ModConfigMenu.SelectionCallbacks, callback)
+  return #ModConfigMenu.SelectionCallbacks -- Return callback ID for potential removal
+end
+
+-- Remove a selection callback by ID
+function ModConfigMenu.RemoveSelectionCallback(callbackId)
+  if type(callbackId) == "number" and ModConfigMenu.SelectionCallbacks[callbackId] then
+    ModConfigMenu.SelectionCallbacks[callbackId] = nil
+    return true
+  end
+  return false
+end
+
+-- Get the currently selected category name
+function ModConfigMenu.GetCurrentCategory()
+  if not ModConfigMenu.IsVisible then
+    return nil
+  end
+
+  if currentMenuCategory and currentMenuCategory.Name then
+    return currentMenuCategory.Name
+  end
+
+  return nil
+end
+
+-- Get the currently selected subcategory name
+function ModConfigMenu.GetCurrentSubcategory()
+  if not ModConfigMenu.IsVisible or not configMenuInSubcategory then
+    return nil
+  end
+
+  if currentMenuSubcategory and currentMenuSubcategory.Name then
+    return currentMenuSubcategory.Name
+  end
+
+  return nil
+end
+
+-- Get the currently selected option table
+function ModConfigMenu.GetCurrentOption()
+  if not ModConfigMenu.IsVisible or not configMenuInOptions then
+    return nil
+  end
+
+  return currentMenuOption
+end
+
+-- Get the current menu state
+function ModConfigMenu.GetMenuState()
+  if not ModConfigMenu.IsVisible then
+    return "closed"
+  elseif configMenuInPopup then
+    return "popup"
+  elseif configMenuInOptions then
+    return "options"
+  elseif configMenuInSubcategory then
+    return "subcategories"
+  else
+    return "categories"
+  end
+end
+
+-- Get complete selection info in one call
+function ModConfigMenu.GetCurrentSelection()
+  return {
+    category = ModConfigMenu.GetCurrentCategory(),
+    subcategory = ModConfigMenu.GetCurrentSubcategory(),
+    option = ModConfigMenu.GetCurrentOption(),
+    state = ModConfigMenu.GetMenuState()
+  }
+end
+
+-- Internal function to trigger selection callbacks
+local function triggerSelectionCallbacks(categoryName, subcategoryName, optionTable)
+  for i, callback in pairs(ModConfigMenu.SelectionCallbacks) do
+    if type(callback) == "function" then
+      local success, error = pcall(callback, categoryName, subcategoryName, optionTable)
+      if not success then
+        Isaac.DebugString("ModConfigMenu: Selection callback error: " .. tostring(error))
+      end
+    end
+  end
+end
+
+-- Track previous selection to detect changes
+local lastSelectionCategory = nil
+local lastSelectionSubcategory = nil
+local lastSelectionOption = nil
+
+-- Internal function to check for selection changes and trigger callbacks
+local function checkSelectionChanges()
+  if not ModConfigMenu.IsVisible then
+    -- If menu closed, clear tracking and notify if there was a previous selection
+    if lastSelectionCategory or lastSelectionSubcategory or lastSelectionOption then
+      lastSelectionCategory = nil
+      lastSelectionSubcategory = nil
+      lastSelectionOption = nil
+      triggerSelectionCallbacks(nil, nil, nil)
+    end
+    return
+  end
+
+  local currentCategory = ModConfigMenu.GetCurrentCategory()
+  local currentSubcategory = ModConfigMenu.GetCurrentSubcategory()
+  local currentOption = ModConfigMenu.GetCurrentOption()
+
+  -- Check if selection has changed
+  if currentCategory ~= lastSelectionCategory or
+      currentSubcategory ~= lastSelectionSubcategory or
+      currentOption ~= lastSelectionOption then
+    lastSelectionCategory = currentCategory
+    lastSelectionSubcategory = currentSubcategory
+    lastSelectionOption = currentOption
+
+    triggerSelectionCallbacks(currentCategory, currentSubcategory, currentOption)
+  end
 end
 
 --------------------------
@@ -1921,221 +2056,221 @@ function ModConfigMenu.PostRender()
             end
           end
         end
-      end
 
-      if currentMenuOption.Restart or currentMenuOption.Rerun then
+        if currentMenuOption.Restart or currentMenuOption.Rerun then
+          --confirmed left press
+          if pressingButton == "RIGHT" then
+            leavePopup = true
+          end
+
+          --confirmed back press
+          if pressingButton == "SELECT" then
+            leavePopup = true
+          end
+        end
+
         --confirmed left press
-        if pressingButton == "RIGHT" then
+        if pressingButton == "LEFT" then
           leavePopup = true
         end
 
         --confirmed back press
-        if pressingButton == "SELECT" then
+        if pressingButton == "BACK" then
           leavePopup = true
         end
-      end
-
-      --confirmed left press
-      if pressingButton == "LEFT" then
-        leavePopup = true
-      end
-
-      --confirmed back press
-      if pressingButton == "BACK" then
-        leavePopup = true
-      end
-    elseif configMenuInOptions then
-      --confirmed down press
-      if pressingButton == "DOWN" then
-        configMenuPositionCursorOption = configMenuPositionCursorOption + 1 --move options cursor down
-      end
-
-      --confirmed up press
-      if pressingButton == "UP" then
-        configMenuPositionCursorOption = configMenuPositionCursorOption - 1 --move options cursor up
-      end
-
-      if pressingButton == "SELECT" or pressingButton == "RIGHT" or pressingButton == "LEFT" or
-          (pressingButton == "RESET" and currentMenuOption and currentMenuOption.Default ~= nil) then
-        if pressingButton == "LEFT" then
-          leaveOptions = true
+      elseif configMenuInOptions then
+        --confirmed down press
+        if pressingButton == "DOWN" then
+          configMenuPositionCursorOption = configMenuPositionCursorOption + 1 --move options cursor down
         end
 
-        if currentMenuOption then
-          local optionType = currentMenuOption.Type
-          local optionCurrent = currentMenuOption.CurrentSetting
-          local optionOnChange = currentMenuOption.OnChange
+        --confirmed up press
+        if pressingButton == "UP" then
+          configMenuPositionCursorOption = configMenuPositionCursorOption - 1 --move options cursor up
+        end
 
-          if optionType == ModConfigMenu.OptionType.SCROLL or optionType == ModConfigMenu.OptionType.NUMBER then
-            leaveOptions = false
+        if pressingButton == "SELECT" or pressingButton == "RIGHT" or pressingButton == "LEFT" or
+            (pressingButton == "RESET" and currentMenuOption and currentMenuOption.Default ~= nil) then
+          if pressingButton == "LEFT" then
+            leaveOptions = true
+          end
 
-            local numberToChange = optionCurrent
+          if currentMenuOption then
+            local optionType = currentMenuOption.Type
+            local optionCurrent = currentMenuOption.CurrentSetting
+            local optionOnChange = currentMenuOption.OnChange
 
-            if type(optionCurrent) == "function" then
-              numberToChange = optionCurrent()
-            end
+            if optionType == ModConfigMenu.OptionType.SCROLL or optionType == ModConfigMenu.OptionType.NUMBER then
+              leaveOptions = false
 
-            local modifyBy = currentMenuOption.ModifyBy or 1
-            modifyBy = math.max(modifyBy, 0.001)
-            if math.floor(modifyBy) == modifyBy then --force modify by into being an integer instead of a float if it should be
-              modifyBy = math.floor(modifyBy)
-            end
+              local numberToChange = optionCurrent
 
-            if pressingButton == "RIGHT" or pressingButton == "SELECT" then
-              numberToChange = numberToChange + modifyBy
-            elseif pressingButton == "LEFT" then
-              numberToChange = numberToChange - modifyBy
-            elseif pressingButton == "RESET" and currentMenuOption.Default ~= nil then
+              if type(optionCurrent) == "function" then
+                numberToChange = optionCurrent()
+              end
+
+              local modifyBy = currentMenuOption.ModifyBy or 1
+              modifyBy = math.max(modifyBy, 0.001)
+              if math.floor(modifyBy) == modifyBy then --force modify by into being an integer instead of a float if it should be
+                modifyBy = math.floor(modifyBy)
+              end
+
+              if pressingButton == "RIGHT" or pressingButton == "SELECT" then
+                numberToChange = numberToChange + modifyBy
+              elseif pressingButton == "LEFT" then
+                numberToChange = numberToChange - modifyBy
+              elseif pressingButton == "RESET" and currentMenuOption.Default ~= nil then
+                numberToChange = currentMenuOption.Default
+                if type(currentMenuOption.Default) == "function" then
+                  numberToChange = currentMenuOption.Default()
+                end
+              end
+
+              if optionType == ModConfigMenu.OptionType.SCROLL then
+                numberToChange = math.max(math.min(math.floor(numberToChange), 10), 0)
+              else
+                if currentMenuOption.Maximum and numberToChange > currentMenuOption.Maximum then
+                  if not currentMenuOption.NoLoopFromMaxMin and currentMenuOption.Minimum then
+                    numberToChange = currentMenuOption.Minimum
+                  else
+                    numberToChange = currentMenuOption.Maximum
+                  end
+                end
+                if currentMenuOption.Minimum and numberToChange < currentMenuOption.Minimum then
+                  if not currentMenuOption.NoLoopFromMaxMin and currentMenuOption.Maximum then
+                    numberToChange = currentMenuOption.Maximum
+                  else
+                    numberToChange = currentMenuOption.Minimum
+                  end
+                end
+              end
+
+              if math.floor(modifyBy) ~= modifyBy then --check if modify by is a float
+                numberToChange = math.floor((numberToChange * 1000) + 0.5) * 0.001
+              else
+                numberToChange = math.floor(numberToChange)
+              end
+
+              if type(optionCurrent) == "function" then
+                if optionOnChange then
+                  optionOnChange(numberToChange)
+                end
+                optionChanged = true
+              elseif type(optionCurrent) == "number" then
+                currentMenuOption.CurrentSetting = numberToChange
+                optionChanged = true
+              end
+
+              --callback
+              --[[
+              CustomCallbackHelper.CallCallbacks
+              (
+                CustomCallbacks.MCM_POST_MODIFY_SETTING, --callback id
+                nil,
+                {currentMenuOption.CurrentSetting, numberToChange}, --args to send
+                {currentMenuCategory.Name, currentMenuOption.Attribute} --extra variables
+              )
+              --]]
+              local sound = currentMenuOption.Sound
+              if not sound then
+                sound = SoundEffect.SOUND_PLOP
+              end
+              if sound >= 0 then
+                sfx:Play(sound, 1, 0, false, 1)
+              end
+            elseif optionType == ModConfigMenu.OptionType.BOOLEAN then
+              leaveOptions = false
+
+              local boolToChange = optionCurrent
+
+              if type(optionCurrent) == "function" then
+                boolToChange = optionCurrent()
+              end
+
+              if pressingButton == "RESET" and currentMenuOption.Default ~= nil then
+                boolToChange = currentMenuOption.Default
+                if type(currentMenuOption.Default) == "function" then
+                  boolToChange = currentMenuOption.Default()
+                end
+              else
+                boolToChange = (not boolToChange)
+              end
+
+              if type(optionCurrent) == "function" then
+                if optionOnChange then
+                  optionOnChange(boolToChange)
+                end
+                optionChanged = true
+              elseif type(optionCurrent) == "boolean" then
+                currentMenuOption.CurrentSetting = boolToChange
+                optionChanged = true
+              end
+
+              --callback
+              --[[
+              CustomCallbackHelper.CallCallbacks
+              (
+                CustomCallbacks.MCM_POST_MODIFY_SETTING, --callback id
+                nil,
+                {currentMenuOption.CurrentSetting, boolToChange}, --args to send
+                {currentMenuCategory.Name, currentMenuOption.Attribute} --extra variables
+              )
+              --]]
+              local sound = currentMenuOption.Sound
+              if not sound then
+                sound = SoundEffect.SOUND_PLOP
+              end
+              if sound >= 0 then
+                sfx:Play(sound, 1, 0, false, 1)
+              end
+            elseif (
+                  optionType == ModConfigMenu.OptionType.KEYBIND_KEYBOARD or
+                  optionType == ModConfigMenu.OptionType.KEYBIND_CONTROLLER) and pressingButton == "RESET" and
+                currentMenuOption.Default ~= nil then
+              local numberToChange = optionCurrent
+
+              if type(optionCurrent) == "function" then
+                numberToChange = optionCurrent()
+              end
+
               numberToChange = currentMenuOption.Default
               if type(currentMenuOption.Default) == "function" then
                 numberToChange = currentMenuOption.Default()
               end
-            end
 
-            if optionType == ModConfigMenu.OptionType.SCROLL then
-              numberToChange = math.max(math.min(math.floor(numberToChange), 10), 0)
-            else
-              if currentMenuOption.Maximum and numberToChange > currentMenuOption.Maximum then
-                if not currentMenuOption.NoLoopFromMaxMin and currentMenuOption.Minimum then
-                  numberToChange = currentMenuOption.Minimum
-                else
-                  numberToChange = currentMenuOption.Maximum
+              if type(optionCurrent) == "function" then
+                if optionOnChange then
+                  optionOnChange(numberToChange)
                 end
+                optionChanged = true
+              elseif type(optionCurrent) == "number" then
+                currentMenuOption.CurrentSetting = numberToChange
+                optionChanged = true
               end
-              if currentMenuOption.Minimum and numberToChange < currentMenuOption.Minimum then
-                if not currentMenuOption.NoLoopFromMaxMin and currentMenuOption.Maximum then
-                  numberToChange = currentMenuOption.Maximum
-                else
-                  numberToChange = currentMenuOption.Minimum
-                end
+
+              --callback
+              --[[
+              CustomCallbackHelper.CallCallbacks
+              (
+                CustomCallbacks.MCM_POST_MODIFY_SETTING, --callback id
+                nil,
+                {currentMenuOption.CurrentSetting, numberToChange}, --args to send
+                {currentMenuCategory.Name, currentMenuOption.Attribute} --extra variables
+              )
+              --]]
+              local sound = currentMenuOption.Sound
+              if not sound then
+                sound = SoundEffect.SOUND_PLOP
               end
-            end
-
-            if math.floor(modifyBy) ~= modifyBy then --check if modify by is a float
-              numberToChange = math.floor((numberToChange * 1000) + 0.5) * 0.001
-            else
-              numberToChange = math.floor(numberToChange)
-            end
-
-            if type(optionCurrent) == "function" then
-              if optionOnChange then
-                optionOnChange(numberToChange)
+              if sound >= 0 then
+                sfx:Play(sound, 1, 0, false, 1)
               end
-              optionChanged = true
-            elseif type(optionCurrent) == "number" then
-              currentMenuOption.CurrentSetting = numberToChange
-              optionChanged = true
-            end
-
-            --callback
-            --[[
-            CustomCallbackHelper.CallCallbacks
-            (
-              CustomCallbacks.MCM_POST_MODIFY_SETTING, --callback id
-              nil,
-              {currentMenuOption.CurrentSetting, numberToChange}, --args to send
-              {currentMenuCategory.Name, currentMenuOption.Attribute} --extra variables
-            )
-            --]]
-            local sound = currentMenuOption.Sound
-            if not sound then
-              sound = SoundEffect.SOUND_PLOP
-            end
-            if sound >= 0 then
-              sfx:Play(sound, 1, 0, false, 1)
-            end
-          elseif optionType == ModConfigMenu.OptionType.BOOLEAN then
-            leaveOptions = false
-
-            local boolToChange = optionCurrent
-
-            if type(optionCurrent) == "function" then
-              boolToChange = optionCurrent()
-            end
-
-            if pressingButton == "RESET" and currentMenuOption.Default ~= nil then
-              boolToChange = currentMenuOption.Default
-              if type(currentMenuOption.Default) == "function" then
-                boolToChange = currentMenuOption.Default()
+            elseif optionType ~= ModConfigMenu.OptionType.SPACE and pressingButton == "RIGHT" then
+              if currentMenuOption.Popup then
+                enterPopup = true
+              elseif currentMenuOption.OnSelect then
+                currentMenuOption.OnSelect()
               end
-            else
-              boolToChange = (not boolToChange)
-            end
-
-            if type(optionCurrent) == "function" then
-              if optionOnChange then
-                optionOnChange(boolToChange)
-              end
-              optionChanged = true
-            elseif type(optionCurrent) == "boolean" then
-              currentMenuOption.CurrentSetting = boolToChange
-              optionChanged = true
-            end
-
-            --callback
-            --[[
-            CustomCallbackHelper.CallCallbacks
-            (
-              CustomCallbacks.MCM_POST_MODIFY_SETTING, --callback id
-              nil,
-              {currentMenuOption.CurrentSetting, boolToChange}, --args to send
-              {currentMenuCategory.Name, currentMenuOption.Attribute} --extra variables
-            )
-            --]]
-            local sound = currentMenuOption.Sound
-            if not sound then
-              sound = SoundEffect.SOUND_PLOP
-            end
-            if sound >= 0 then
-              sfx:Play(sound, 1, 0, false, 1)
-            end
-          elseif (
-                optionType == ModConfigMenu.OptionType.KEYBIND_KEYBOARD or
-                optionType == ModConfigMenu.OptionType.KEYBIND_CONTROLLER) and pressingButton == "RESET" and
-              currentMenuOption.Default ~= nil then
-            local numberToChange = optionCurrent
-
-            if type(optionCurrent) == "function" then
-              numberToChange = optionCurrent()
-            end
-
-            numberToChange = currentMenuOption.Default
-            if type(currentMenuOption.Default) == "function" then
-              numberToChange = currentMenuOption.Default()
-            end
-
-            if type(optionCurrent) == "function" then
-              if optionOnChange then
-                optionOnChange(numberToChange)
-              end
-              optionChanged = true
-            elseif type(optionCurrent) == "number" then
-              currentMenuOption.CurrentSetting = numberToChange
-              optionChanged = true
-            end
-
-            --callback
-            --[[
-            CustomCallbackHelper.CallCallbacks
-            (
-              CustomCallbacks.MCM_POST_MODIFY_SETTING, --callback id
-              nil,
-              {currentMenuOption.CurrentSetting, numberToChange}, --args to send
-              {currentMenuCategory.Name, currentMenuOption.Attribute} --extra variables
-            )
-            --]]
-            local sound = currentMenuOption.Sound
-            if not sound then
-              sound = SoundEffect.SOUND_PLOP
-            end
-            if sound >= 0 then
-              sfx:Play(sound, 1, 0, false, 1)
-            end
-          elseif optionType ~= ModConfigMenu.OptionType.SPACE and pressingButton == "RIGHT" then
-            if currentMenuOption.Popup then
-              enterPopup = true
-            elseif currentMenuOption.OnSelect then
-              currentMenuOption.OnSelect()
             end
           end
         end
