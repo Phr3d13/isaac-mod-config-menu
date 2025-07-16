@@ -5,3 +5,4 @@ thumbs.db
 # Isaac-related files
 disable.it
 *.dat
+.luarc.json

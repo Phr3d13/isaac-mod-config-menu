@@ -8,7 +8,6 @@ local json = require("json")
 -- The final version of Chifilly's Mod Config Menu fork was 33.
 -- For the pure version, we arbitrarily selected a starting point of 100 and incremented from there.
 local VERSION = 112
-local IS_DEV = false
 
 ModConfigMenu = {}
 ModConfigMenu.Version = VERSION
@@ -101,10 +100,6 @@ ModConfigMenu.Config = {}
 local function save()
   local mod = ModConfigMenu.Mod
 
-  if IS_DEV then
-    Isaac.DebugString("MCM is saving data.")
-  end
-
   local jsonString = json.encode(ModConfigMenu.Config)
   if jsonString == nil or jsonString == "" then
     return
@@ -115,10 +110,6 @@ end
 
 local function load()
   local mod = ModConfigMenu.Mod
-
-  if IS_DEV then
-    Isaac.DebugString("MCM is loading data.")
-  end
 
   if not mod:HasData() then
     save()
@@ -149,9 +140,6 @@ function ModConfigMenu.LoadSave(data)
   if type(data) == "table" then
     saveData["General"] = SaveHelper.FillTable(saveData["General"], data["General"] or {})
     saveData["Mod Config Menu"] = SaveHelper.FillTable(saveData["Mod Config Menu"], data["Mod Config Menu"] or data or {})
-    if IS_DEV then
-      Isaac.DebugString("Successfully loaded data from the \"save#.dat\" file.")
-    end
   end
 
   local currentData = SaveHelper.CopyTable(ModConfigMenu.Config)
@@ -185,19 +173,24 @@ local isFirstRun = true
 
 --returns true if the room is clear and there are no active enemies and there are no projectiles
 ModConfigMenu.IgnoreActiveEnemies = ModConfigMenu.IgnoreActiveEnemies or {}
-function ModConfigMenu.RoomIsSafe()
-  local roomHasDanger = false
 
-  -- Add error handling for entity enumeration
-  local success, entities = pcall(Isaac.GetRoomEntities)
-  if not success or not entities then
-    if IS_DEV then
-      Isaac.DebugString("MCM: Warning - Failed to get room entities, assuming room is unsafe")
-    end
-    return false
+-- Performance cache for room safety checks
+local lastRoomSafetyCheck = 0
+local lastRoomSafetyResult = false
+local roomSafetyCacheFrames = 5 -- Check room safety every 5 frames instead of every frame
+
+function ModConfigMenu.RoomIsSafe()
+  local currentFrame = Game():GetFrameCount()
+
+  -- Use cached result if we checked recently
+  if currentFrame - lastRoomSafetyCheck < roomSafetyCacheFrames then
+    return lastRoomSafetyResult
   end
 
-  for _, entity in pairs(entities) do
+  lastRoomSafetyCheck = currentFrame
+  local roomHasDanger = false
+
+  for _, entity in pairs(Isaac.GetRoomEntities()) do
     if (
           entity:IsActiveEnemy()
           and not entity:HasEntityFlags(EntityFlag.FLAG_FRIENDLY)
@@ -211,32 +204,29 @@ function ModConfigMenu.RoomIsSafe()
           )
         ) then
       roomHasDanger = true
+      break -- Early exit when danger is found
     elseif (
           entity.Type == EntityType.ENTITY_PROJECTILE
           and entity:ToProjectile().ProjectileFlags & ProjectileFlags.CANT_HIT_PLAYER ~= 1
         ) then
       roomHasDanger = true
+      break -- Early exit when danger is found
     elseif entity.Type == EntityType.ENTITY_BOMBDROP then
       roomHasDanger = true
+      break -- Early exit when danger is found
     end
   end
 
   local game = Game()
   local room = game:GetRoom()
 
-  if room:IsClear() and not roomHasDanger then
-    return true
-  end
-
-  return false
+  local result = room:IsClear() and not roomHasDanger
+  lastRoomSafetyResult = result
+  return result
 end
 
 ModConfigMenu.IsVisible = false
 function ModConfigMenu.PostGameStarted()
-  if IS_DEV then
-    Isaac.DebugString("POST_GAME_STARTED")
-  end
-
   rerunWarnMessage = nil
 
   load()
@@ -253,11 +243,21 @@ function ModConfigMenu.PostGameStarted()
     if data.ConfigMenuPlayerControlsDisabled then
       player.ControlsEnabled = true
       data.ConfigMenuPlayerControlsDisabled = false
-      if IS_DEV then
-        Isaac.DebugString("MCM: Restored controls for player " .. tostring(i) .. " (game start)")
-      end
     end
   end
+
+  -- Ensure global controls are enabled at game start
+  ModConfigMenu.ControlsEnabled = true
+  ModConfigMenu.IsVisible = false
+
+  -- Reset any stuck menu states
+  configMenuInPopup = false
+  configMenuInOptions = false
+  configMenuInSubcategory = false
+
+  -- Reset room safety cache to ensure fresh safety check in new run
+  lastRoomSafetyCheck = 0
+  lastRoomSafetyResult = false
 
   if not isFirstRun then
     return
@@ -691,7 +691,7 @@ function ModConfigMenu.SimpleAddSetting(settingType, categoryName, subcategoryNa
       local displayString = ""
 
       if displayText then
-        displayString = displayText .. ": "
+        displayString = displayString .. displayText .. ": "
       end
 
       if settingType == ModConfigMenu.OptionType.SCROLL then
@@ -1498,21 +1498,31 @@ function ModConfigMenu.ConvertDisplayToTextTable(displayValue, lineWidth, font)
   local textTableDisplayAfterWordLength = {}
   for lineIndex = 1, #textTableDisplayAfterNewlines do
     local line = textTableDisplayAfterNewlines[lineIndex]
-    local curLength = 0
-    local text = ""
-    for word in string.gmatch(tostring(line), "([^%s]+)") do
-      local wordLength = font:GetStringWidthUTF8(word)
 
-      if curLength + wordLength <= lineWidth or curLength < 12 then
-        text = text .. word .. " "
-        curLength = curLength + wordLength
-      else
-        table.insert(textTableDisplayAfterWordLength, text)
-        text = word .. " "
-        curLength = wordLength
+    -- Simple approach: if line is short enough, use it as-is
+    if not font or string.len(line) <= 50 then
+      table.insert(textTableDisplayAfterWordLength, line)
+    else
+      -- More complex word wrapping only for longer lines
+      local curLength = 0
+      local text = ""
+      for word in string.gmatch(tostring(line), "([^%s]+)") do
+        local wordLength = 0
+        if font and font.GetStringWidthUTF8 then
+          wordLength = font:GetStringWidthUTF8(word) or 0
+        end
+
+        if curLength + wordLength <= lineWidth or curLength < 12 then
+          text = text .. word .. " "
+          curLength = curLength + wordLength
+        else
+          table.insert(textTableDisplayAfterWordLength, text)
+          text = word .. " "
+          curLength = wordLength
+        end
       end
+      table.insert(textTableDisplayAfterWordLength, text)
     end
-    table.insert(textTableDisplayAfterWordLength, text)
   end
 
   return textTableDisplayAfterWordLength
@@ -1528,13 +1538,67 @@ local HudOffsetVisualBottomLeft = ModConfigMenu.GetMenuAnm2Sprite("Offset", 3)
 local leftCurrentOffset = 0
 local optionsCurrentOffset = 0
 ModConfigMenu.ControlsEnabled = true
+
+-- Performance cache for frequently accessed config values
+local cachedOpenMenuKeyboard = nil
+local cachedOpenMenuController = nil
+local cachedShowControls = nil
+local cachedHideHudInMenu = nil
+local lastConfigCacheUpdate = 0
+
+local function updateConfigCache()
+  -- Update cache every few frames to balance performance with responsiveness
+  local currentFrame = Game():GetFrameCount()
+  if currentFrame - lastConfigCacheUpdate > 10 then
+    cachedOpenMenuKeyboard = ModConfigMenu.Config["Mod Config Menu"].OpenMenuKeyboard
+    cachedOpenMenuController = ModConfigMenu.Config["Mod Config Menu"].OpenMenuController
+    cachedShowControls = ModConfigMenu.Config["Mod Config Menu"].ShowControls
+    cachedHideHudInMenu = ModConfigMenu.Config["Mod Config Menu"].HideHudInMenu
+    lastConfigCacheUpdate = currentFrame
+  end
+end
+
 function ModConfigMenu.PostRender()
+  updateConfigCache() -- Update config cache periodically for performance
+
   local game = Game()
   local isPaused = game:IsPaused()
 
   -- Only check AwaitingTextInput if it's actually defined
   if AwaitingTextInput ~= nil then
     isPaused = isPaused or AwaitingTextInput
+  end
+
+  -- Performance optimization: when menu is not visible, handle safety checks only
+  if not ModConfigMenu.IsVisible then
+    -- Safety check: if menu is not visible but players have disabled controls, restore them
+    local foundControlIssues = false
+
+    if configMenuInPopup or configMenuInOptions or configMenuInSubcategory then
+      configMenuInPopup = false
+      configMenuInOptions = false
+      configMenuInSubcategory = false
+      foundControlIssues = true
+    end
+
+    for i = 0, game:GetNumPlayers() - 1 do
+      local player = Isaac.GetPlayer(i)
+      local data = player:GetData()
+
+      if data.ConfigMenuPlayerControlsDisabled then
+        player.ControlsEnabled = true
+        data.ConfigMenuPlayerControlsDisabled = false
+        if data.ConfigMenuPlayerPosition then
+          data.ConfigMenuPlayerPosition = nil
+        end
+        foundControlIssues = true
+      end
+    end
+
+    -- If we found and fixed control issues, force controls to be enabled globally
+    if foundControlIssues then
+      ModConfigMenu.ControlsEnabled = true
+    end
   end
 
   local sfx = SFXManager()
@@ -1545,15 +1609,18 @@ function ModConfigMenu.PostRender()
   local pressedToggleMenu = false
 
   local openMenuGlobal = Keyboard.KEY_F10
-  local openMenuKeyboard = ModConfigMenu.Config["Mod Config Menu"].OpenMenuKeyboard
-  local openMenuController = ModConfigMenu.Config["Mod Config Menu"].OpenMenuController
+  local openMenuKeyboard = cachedOpenMenuKeyboard or ModConfigMenu.Config["Mod Config Menu"].OpenMenuKeyboard
+  local openMenuController = cachedOpenMenuController or ModConfigMenu.Config["Mod Config Menu"].OpenMenuController
 
   local takeScreenshot = Keyboard.KEY_F12
 
-  --handle version display on game start
-  if versionPrintTimer > 0 then
-    local bottomRight = ScreenHelper.GetScreenBottomRight(0)
+  --handle version display on game start and warnings with shared bottomRight calculation
+  local bottomRight = nil
+  if versionPrintTimer > 0 or restartWarnMessage or rerunWarnMessage then
+    bottomRight = ScreenHelper.GetScreenBottomRight(0)
+  end
 
+  if versionPrintTimer > 0 then
     local openMenuButton = Keyboard.KEY_F10
     if type(ModConfigMenu.Config["Mod Config Menu"].OpenMenuKeyboard) == "number" and
         ModConfigMenu.Config["Mod Config Menu"].OpenMenuKeyboard > -1 then
@@ -1572,8 +1639,6 @@ function ModConfigMenu.PostRender()
 
   --on-screen warnings
   if restartWarnMessage or rerunWarnMessage then
-    local bottomRight = ScreenHelper.GetScreenBottomRight(0)
-
     local text = restartWarnMessage or rerunWarnMessage
     local warningPrintColor = KColor(1, 0, 0, 1)
     versionPrintFont:DrawString(text, 0, bottomRight.Y - 28, warningPrintColor, math.floor(bottomRight.X), true)
@@ -1581,36 +1646,6 @@ function ModConfigMenu.PostRender()
 
   --handle toggling the menu
   if ModConfigMenu.ControlsEnabled and not isPaused then
-    -- Safety check: if menu is not visible but players have disabled controls, restore them
-    if not ModConfigMenu.IsVisible then
-      -- Additional safety: reset menu states if they're stuck while menu is closed
-      if configMenuInPopup or configMenuInOptions or configMenuInSubcategory then
-        configMenuInPopup = false
-        configMenuInOptions = false
-        configMenuInSubcategory = false
-        if IS_DEV then
-          Isaac.DebugString("MCM: Reset stuck menu states while menu was closed")
-        end
-      end
-
-      local game = Game()
-      for i = 0, game:GetNumPlayers() - 1 do
-        local player = Isaac.GetPlayer(i)
-        local data = player:GetData()
-
-        if data.ConfigMenuPlayerControlsDisabled then
-          player.ControlsEnabled = true
-          data.ConfigMenuPlayerControlsDisabled = false
-          if data.ConfigMenuPlayerPosition then
-            data.ConfigMenuPlayerPosition = nil
-          end
-          if IS_DEV then
-            Isaac.DebugString("MCM: Restored controls for player " .. tostring(i) .. " (safety check)")
-          end
-        end
-      end
-    end
-
     for i = 0, 4 do
       if InputHelper.KeyboardTriggered(openMenuGlobal, i)
           or (openMenuKeyboard > -1 and InputHelper.KeyboardTriggered(openMenuKeyboard, i))
@@ -1618,24 +1653,13 @@ function ModConfigMenu.PostRender()
         pressingNonRebindableKey = true
         pressedToggleMenu = true
         if not configMenuInPopup then
-          if IS_DEV then
-            Isaac.DebugString("MCM: Menu toggle triggered from controller " .. tostring(i))
-          end
           ModConfigMenu.ToggleConfigMenu()
-        elseif IS_DEV then
-          Isaac.DebugString("MCM: Menu toggle blocked - in popup")
         end
       end
 
       if InputHelper.KeyboardTriggered(takeScreenshot, i) then
         pressingNonRebindableKey = true
       end
-    end
-  elseif IS_DEV then
-    if not ModConfigMenu.ControlsEnabled then
-      Isaac.DebugString("MCM: Input blocked - controls disabled")
-    elseif isPaused then
-      Isaac.DebugString("MCM: Input blocked - game paused")
     end
   end
 
@@ -2473,7 +2497,7 @@ function ModConfigMenu.PostRender()
     if configMenuInOptions and currentMenuOption and currentMenuOption.HideControls then
       shouldShowControls = false
     end
-    if not ModConfigMenu.Config["Mod Config Menu"].ShowControls then
+    if not (cachedShowControls or ModConfigMenu.Config["Mod Config Menu"].ShowControls) then
       shouldShowControls = false
     end
 
@@ -2985,7 +3009,7 @@ ModConfigMenu.Mod:AddCallback(ModCallbacks.MC_POST_RENDER, ModConfigMenu.PostRen
 
 function ModConfigMenu.OpenConfigMenu()
   if ModConfigMenu.RoomIsSafe() then
-    if ModConfigMenu.Config["Mod Config Menu"].HideHudInMenu then
+    if cachedHideHudInMenu or ModConfigMenu.Config["Mod Config Menu"].HideHudInMenu then
       local game = Game()
       if REPENTANCE then
         local hud = game:GetHUD()
@@ -3001,10 +3025,7 @@ function ModConfigMenu.OpenConfigMenu()
     local sfx = SFXManager()
     sfx:Play(SoundEffect.SOUND_BOSS2INTRO_ERRORBUZZ, 0.75, 0, false, 1)
 
-    -- Provide feedback about why menu won't open
-    if IS_DEV then
-      Isaac.DebugString("MCM: Cannot open menu - room is not safe (enemies, projectiles, or bombs present)")
-    end
+    -- Cannot open menu in unsafe room
   end
 end
 
@@ -3033,13 +3054,17 @@ function ModConfigMenu.CloseConfigMenu()
     if data.ConfigMenuPlayerControlsDisabled then
       player.ControlsEnabled = true
       data.ConfigMenuPlayerControlsDisabled = false
-      if IS_DEV then
-        Isaac.DebugString("MCM: Restored controls for player " .. tostring(i) .. " (menu close)")
-      end
     end
   end
 
+  -- Ensure global state is properly reset
   ModConfigMenu.IsVisible = false
+  ModConfigMenu.ControlsEnabled = true
+
+  -- Reset menu states
+  configMenuInPopup = false
+  configMenuInOptions = false
+  configMenuInSubcategory = false
 end
 
 function ModConfigMenu.ToggleConfigMenu()
@@ -3059,14 +3084,17 @@ function ModConfigMenu.ToggleConfigMenu()
 end
 
 function ModConfigMenu.InputAction(_, entity, inputHook, buttonAction)
-  if ModConfigMenu.IsVisible and buttonAction ~= ButtonAction.ACTION_FULLSCREEN and
-      buttonAction ~= ButtonAction.ACTION_CONSOLE then
+  -- Only block input when menu is actually visible and controls are disabled
+  if ModConfigMenu.IsVisible and ModConfigMenu.ControlsEnabled and
+      buttonAction ~= ButtonAction.ACTION_FULLSCREEN and buttonAction ~= ButtonAction.ACTION_CONSOLE then
     if inputHook == InputHook.IS_ACTION_PRESSED or inputHook == InputHook.IS_ACTION_TRIGGERED then
       return false
     else
       return 0
     end
   end
+  -- Allow all input when menu is not visible or controls are disabled
+  return nil
 end
 
 ModConfigMenu.Mod:AddCallback(ModCallbacks.MC_INPUT_ACTION, ModConfigMenu.InputAction)
@@ -3098,6 +3126,5 @@ end
 --FINISHED--
 ------------
 Isaac.DebugString("Mod Config Menu v" .. tostring(ModConfigMenu.Version) .. " - Loaded.")
-print("Mod Config Menu v" .. tostring(ModConfigMenu.Version) .. " - Loaded.")
 
 return ModConfigMenu
