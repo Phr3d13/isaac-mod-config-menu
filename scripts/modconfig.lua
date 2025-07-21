@@ -232,6 +232,8 @@ function ModConfigMenu.PostGameStarted()
 
   load()
 
+  ModConfigMenu.IsVisible = false
+
   if not isFirstRun then
     return
   end
@@ -240,8 +242,6 @@ function ModConfigMenu.PostGameStarted()
   if ModConfigMenu.Config["Mod Config Menu"].ShowControls and isFirstRun then
     versionPrintTimer = 120
   end
-
-  ModConfigMenu.IsVisible = false
 
   -- Add Potato Dummy to the ignore list.
   local potatoType = Isaac.GetEntityTypeByName("Potato Dummy")
