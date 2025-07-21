@@ -1285,6 +1285,15 @@ local ignoreActionButtons = { Controller.BUTTON_A, Controller.BUTTON_B, Controll
 local currentMenuCategory = nil
 local currentMenuSubcategory = nil
 local currentMenuOption = nil
+
+function ModConfigMenu.GetCurrentSelection()
+  return {
+    Category = currentMenuCategory,
+    Subcategory = currentMenuSubcategory,
+    Option = currentMenuOption
+  }
+end
+
 local function updateCurrentMenuVars()
   if ModConfigMenu.MenuData[configMenuPositionCursorCategory] then
     currentMenuCategory = ModConfigMenu.MenuData[configMenuPositionCursorCategory]
