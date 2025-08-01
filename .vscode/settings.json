@@ -25,7 +25,7 @@
   "[lua]": {
     "editor.defaultFormatter": "sumneko.lua",
     "editor.formatOnSave": true,
-    "editor.tabSize": 2,
+    "editor.tabSize": 2
   },
 
   // Isaac globals, auto-defined from Filloax's extension.
@@ -170,5 +170,5 @@
     "DetailedRespawn",
     "AwaitingTextInput",
     "DeadSeaScrollsMenu"
-  ],
+  ]
 }
